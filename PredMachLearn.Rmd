@@ -1,0 +1,118 @@
+---
+title: "Predicting Exercise"
+output: pdf_document
+---
+
+This document describes the approach explored / model for the exercise prediction.
+The data was received using devices that measure different type of activities. Based on those measurements the model tries to define activity performed.
+
+
+## Data upload and cleaning
+
+Firstly, the raw measurements data provided was uploaded into R.
+
+```{r}
+
+training <- read.csv("pml-training.csv")
+testing <- read.csv("pml-testing.csv")
+
+```
+
+After this some variable summary analysis was performed. It is not shown in the document as a summary on 160 variables can be quite lengthy. 
+It was identified that many variables have too many NAs. Particularly, out of the data set with 160 variables and 19622 rows 67 variables have NAs.
+
+```{r}
+dim(training)
+navar <- sapply(training, function(x) sum(is.na(x)))
+length(navar[navar>0])
+
+quantile(navar[navar>0])
+
+```
+
+Those variables have constant quantity of NAs absent. Consequently, they are dropped due to data quality issues. 
+
+As a second step - only integer and numeric variables are taken. Those variables are easiest to use. Depending on training results additional variables can be added.
+
+```{r}
+classvar <- sapply(training, function(x) class(x))
+filtnames <- names(training[navar == 0 & classvar %in% c("integer", "numeric")])
+filtnames <- filtnames[5:length(filtnames)]
+
+# apply variable filter to the imported data
+trainingfilt <- training[, c(filtnames, "classe")]
+testingfilt <- testing[, c(filtnames)]
+```
+
+## Training / validaiton  sets and initial data exploration
+
+The training data is split into training and validation set.
+
+```{r cache=TRUE, echo=FALSE}
+library("caret")
+library("gbm")
+library("survival")
+library("plyr")
+library("e1071")
+library("parallel")
+library("splines")
+
+set.seed(3333)
+
+inTrain <- createDataPartition(y = trainingfilt$classe, p=0.6, list = FALSE)
+traincl <- trainingfilt[inTrain,]
+testcl <- trainingfilt[-inTrain,]
+```
+
+
+
+The assignment requires prediction the exercise performed by based on test set supplied (20 cases). It worth to check the data if easy wins can be achieved.
+
+Let's take a look at the predicted variable distribution
+```{r}
+require(ggplot2)
+qplot(classe, data = traincl, geom="bar") + labs(title = "Count of variable classe")
+```
+
+The training set shows different classes available. Consequently, there is no incentive from the algorithm to simply assign all predictors to one variable (e. g. if 99 out of 100 cases had classe = A).
+
+## Model
+
+Considering the size of the data it was quite difficult to process it without decreasing dimension. So it was decided to pre process it with PCA.
+
+```{r cache=TRUE}
+tc <- trainControl(preProcOptions = list(thresh = 0.8))
+modfitPCA <- train(classe ~ ., data = traincl, method = "gbm", preProcess = "pca", verbose = FALSE, trControl = tc)
+
+```
+
+The following graph presents relative feature importance:
+```{r echo=FALSE, eval=TRUE}
+library(caret)
+gbmImp <- varImp(modfitPCA)
+
+```
+
+```{r}
+
+plot(gbmImp, top = 10)
+
+```
+
+## Results
+In-sample accuracy is around 80%.
+
+```{r}
+
+confusionMatrix(traincl$classe, predict(modfitPCA, newdata = traincl[, -53]))
+
+```
+
+Out of sample accuracy is around 75%
+
+```{r}
+confusionMatrix(testcl$classe, predict(modfitPCA, newdata = testcl[, -53]))
+```
+
+The accuracy can be improved via specifying different PCA threshold and adding more features. For instance, if PCA configuration will be changed to keep 95% variance the accuracy will be above 90%. The code is not shown here as it will take a few hours to compile.
+
